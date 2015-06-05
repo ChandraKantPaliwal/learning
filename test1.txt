@@ -3,3 +3,520 @@ YOYOOYOYOYOYOYO
 YOOY
 
 YOOYOOYO
+
+
+
+var db_module = angular.module("allcadlib", []);
+
+db_module.provider("$allcaddb", function(){
+	// variables
+	var module =  this;
+
+	module.dbName = '';
+    module.dbVersion = 1;
+    module.db = null;
+    module.debugMode = false;
+
+    module.dbPromise = null;
+
+    module.db = "";
+
+    module.storeObj = "";
+
+
+	/** predefined callback functions, can be customized in angular.config */
+    module.onTransactionComplete = function(e) {
+        if(module.debugMode) console.log('Transaction completed.');
+    };
+    module.onTransactionAbort = function(e) {
+        if(module.debugMode) console.log('Transaction aborted: '+ (e.target.webkitErrorMessage || e.target.error.message || e.target.errorCode));
+    };
+    module.onTransactionError = function(e) {
+        if(module.debugMode){
+            if(e.target.error.message){
+                console.log('Transaction failed: ' + e.target.error.message);
+            }
+            else{
+                console.log('Transaction failed: ' + e.target.errorCode);
+            }
+        }
+    };
+    module.onDatabaseError = function(e) {
+        if(module.debugMode) alert("Database error: " + (e.target.webkitErrorMessage || e.target.errorCode));
+    };
+    module.onDatabaseBlocked = function(e) {
+        // If some other tab is loaded with the database, then it needs to be closed
+        // before we can proceed.
+        if(module.debugMode) alert("Database is blocked. Try close other tabs with this page open and reload this page!");
+    };
+
+    module.setDebugMode = function(bool){
+    	module.debugMode = bool;
+    	return this;
+    };
+
+    module.$get = ['$q', '$rootScope', '$window', function($q, $rootScope, $window) {
+    	if(!('indexedDB' in $window)) {
+            $window.indexedDB = $window.mozIndexedDB || $window.webkitIndexedDB || $window.msIndexedDB;
+        }
+        var IDBKeyRange = $window.IDBKeyRange || $window.mozIDBKeyRange || $window.webkitIDBKeyRange || $window.msIDBKeyRange;
+
+		// creating class for the local database
+
+        var Database = function(dbName){
+        	module.dbName = dbName;
+        };
+
+        Database.prototype = {
+        	setDBName : function(dbName){
+        		module.dbName = dbName;
+        	},
+        	setVersion : function(version){
+        		module.version = version;
+        	},
+        	connect : function(){
+        		return this.createDB(module.dbName, module.version);
+        	},
+        	createDB : function(dbName, version){
+        		module.dbVersion = version;
+        		var dbReq, deferred;
+                deferred = $q.defer();
+                module.dbPromise = deferred.promise;
+                if(version == "" || version == undefined){
+        			dbReq = indexedDB.open(module.dbName);
+        		}
+        		else{
+        			dbReq = indexedDB.open(module.dbName, module.dbVersion || 1);
+        		}
+                
+                dbReq.onsuccess = function(e) {
+                    module.db = dbReq.result;
+                    var db = {"db" : module.db, "transaction" : "", "event": e};
+                        deferred.resolve(db);
+                };
+                dbReq.onblocked = module.onDatabaseBlocked;
+                dbReq.onerror = module.onDatabaseError;
+                dbReq.onupgradeneeded = function(e) {
+                    module.db = e.target.result
+                    module.tx = e.target.transaction;
+                    if(module.debugMode){
+                    	console.log('upgrading database "' + module.db.name + '" from version ' + e.oldVersion+' to version ' + e.newVersion + '...');
+                    }
+                    var db = {"db" : module.db, "transaction" : module.tx, "event": e};
+                        deferred.resolve(db);
+                };
+            	return module.dbPromise;
+        	}
+        };
+
+        var ObjectStore = function(){
+        }
+
+        ObjectStore.prototype = {
+        	create : function(storename, e, json){
+                var deferred = $q.defer();
+                module.dbPromise = deferred.promise;
+                if(e.db == undefined || e.db == "" || e.transaction == "" || e.transaction == undefined || e.event == "" || e.event == undefined){
+                    deferred.reject("invalid event to create object store please update db version");
+                }
+                else{
+                    if(json.primary_key == undefined || json.primary_key == ""){
+                        deferred.reject("invalid json please specify primary key");
+                    }
+                    else{
+                        try{
+                            var objStore = e.db.createObjectStore(storename, {keyPath : json.primary_key});
+                            if(json.unique != undefined && json.unique != ""){
+                                objStore.createIndex(json.unique, json.unique, {unique: true});
+                            }
+                            // if(json.timestamp != undefined && json.timestamp != ""){
+                            //     objStore.createIndex(json.timestamp, json.timestamp);
+                            // }
+
+                            angular.forEach(json.data[0], function(value, key){
+                                objStore.createIndex(key, key);
+                                if(module.debugMode){
+                                    console.log("Generated index is : "+key);
+                                }
+                            });
+                        }
+                        catch(err){
+                            deferred.reject(err);
+                        }
+                        deferred.resolve("object Store Generate !");
+                    }
+                }
+                return module.dbPromise;
+        	},
+
+            delete : function(storename, e){
+                var deferred = $q.defer();
+                module.dbPromise = deferred.promise;
+                if(e.db == undefined || e.db == "" || e.transaction == "" || e.transaction == undefined || e.event == "" || e.event == undefined){
+                    deferred.reject("invalid event to delete object store please update db version");
+                }
+                else{
+                    try{
+                        e.db.deleteObjectStore(storename);
+                        deferred.resolve("Object Store deleted");
+                    }
+                    catch(err){
+                        deferred.reject(err.message);
+                    }
+                }
+                return module.dbPromise;
+            },
+
+            _openStore : function(db, storeName, mode){
+                var def = $q.defer();
+                var dbPromise_openstore = def.promise;
+                if(db.objectStoreNames.contains(storeName)){
+                    var tx = db.transaction([storeName], mode || READONLY);
+                    tx.oncomplete = module.onTransactionComplete;
+                    tx.onabort = module.onTransactionAbort;
+                    tx.onerror = module.onTransactionError;
+                    def.resolve(tx.objectStore(storeName));
+                }
+                else{
+                    def.reject("Specified Object Store Was Not Found !");
+                }
+                return dbPromise_openstore;
+            },
+            // insert data into local DB function
+            // @param storename
+            // @param data (may be json / array)
+            insert : function(storename, data){
+                var deferred = $q.defer();
+                module.dbPromise = deferred.promise;
+                var db = module.db;
+                var objStore = this;
+                // new Database(module.dbName).connect().then(function(event){
+                    objStore._openStore(db, storename, "readwrite").then(function(store){
+                        var req;
+                        if(angular.isArray(data)){
+                            data.forEach(function(item, i){
+                                req = store.add(item);
+                                req.onnotify = function(e){
+                                    deferred.notify(e.target.result);
+                                }
+                                req.onerror = function(e){
+                                    deferred.reject(e.target.error.message);
+                                }
+                                req.onsuccess = function(e){
+                                    if(i == data.length-1){
+                                        deferred.resolve(e.target.result);
+                                    }
+                                }
+                            });
+                        }
+                        else{
+                            req = store.add(data);
+                            req.onerror = function(e){
+                                deferred.reject(e.target.error.message);
+                            }
+                            req.onsuccess = function(e){
+                                deferred.resolve(e.target.result);
+                            }
+                        }
+                    }, function(err){
+                        deferred.reject(err);
+                    });
+                // }, function(err){
+                //     deferred.reject(err);
+                // });
+                return module.dbPromise;
+            },
+
+            // update data into local DB function
+            // @param storename
+            // @param data (may be json / array)
+            update : function(storename, data){
+                var deferred = $q.defer();
+                module.dbPromise = deferred.promise;
+                var db = module.db;
+                var objStore = this;
+                // new Database(module.dbName).connect().then(function(event){
+                    objStore._openStore(db, storename, "readwrite").then(function(store){
+                        var req;
+                        if(angular.isArray(data)){
+                            data.forEach(function(item, i){
+                                req = store.put(item);
+                                req.onnotify = function(e){
+                                    deferred.notify(e.target.result);
+                                }
+                                req.onerror = function(e){
+                                    deferred.reject(e.target.error.message);
+                                }
+                                req.onsuccess = function(e){
+                                    if(i == data.length-1){
+                                        deferred.resolve(e.target.result);
+                                    }
+                                }
+                            });
+                        }
+                        else{
+                            req = store.put(data);
+                            req.onerror = function(e){
+                                deferred.reject(e.target.result);
+                            }
+                            req.onsuccess = function(e){
+                                deferred.resolve(e.target.result);
+                            }
+                        }
+                    }, function(err){
+                        deferred.reject(err);
+                    });
+                // }, function(err){
+                //     deferred.reject(err);
+                // });
+                return module.dbPromise;
+            },
+
+            // find all the data from object store in local database
+            // @param : storename
+            getAll : function(storename){
+                var results = [];
+                var deferred = $q.defer();
+                module.dbPromise = deferred.promise;
+                var db = module.db; 
+                var objStore = this;
+
+                this._openStore(db, storename, "readonly").then(function(store){
+                    req = store.openCursor();
+                    req.onsuccess = function(event){
+                        var cursor = event.target.result;
+                        if (cursor){
+                            results.push(cursor.value);
+                            cursor.continue();
+                        } else {
+                            if(module.debugMode){
+                                console.log('Entries all displayed.');
+                                console.log(results);
+                            }
+                            deferred.resolve(results);
+                        }
+                    };
+                    req.onerror = function(event){
+                        deferred.reject(event);
+                    };
+
+                }, function(evt){
+                    deferred.reject(evt);
+                });
+                return module.dbPromise;
+            },
+
+            // find all the record from object store in local Database
+            // @param : array of StoreNames
+            // always need to pass the object store in array format
+            getAllData : function(arrayStoreNames){
+                var resultJson = {};
+                var currentObject = this;
+                var promises = [];
+                var outerDef = $q.defer();
+                var key = "";
+                angular.forEach(arrayStoreNames, function(value, index){
+                    var def = $q.defer();
+                    currentObject.getAll(value).then(function(result){
+                        resultJson[value] = result;
+                        def.resolve(resultJson);
+                    }, function(err){
+                        resultJson[value] = err;
+                        def.resolve(resultJson);
+                    });
+                    promises.push(def.promise);
+                    $q.all(promises).then(function(data){
+                        if(index == (arrayStoreNames.length-1)){
+                            outerDef.resolve(resultJson);
+                        }
+                    });
+                });
+                return outerDef.promise;
+            },
+
+            removeAll : function(storename){
+                var results = [];
+                var deferred = $q.defer();
+                module.dbPromise = deferred.promise;
+                var db = module.db; 
+                var objStore = this;
+
+                this._openStore(db, storename, "readwrite").then(function(store){
+                    var req = store.clear();
+                    req.onsuccess = function(evt){
+                        deferred.resolve("all deta removed successfully !");
+                    };
+                    req.onerror = function(evt){
+                        deferred.reject(evt);
+                    }
+                }, function(evt){
+                    deferred.reject(evt);
+                });
+                return module.dbPromise;
+            },
+            
+            removeByKey : function(){},
+
+            // function return the data as per the key requirement
+            // @param : storename
+            // @param : json data {key : value} format
+            getByKey : function(storename, key){
+                var results = [];
+                var deferred = $q.defer();
+                var promises = deferred.promise;
+                var db = module.db;
+                var objStore = this;
+
+                this._openStore(db, storename, "readonly").then(function(store){
+                    // console.log(store);
+                    var index = store.index(key);
+
+                    // console.log(index);
+                    var req = store.openCursor();
+                    req.onsuccess = function(event){
+                        var cursor = event.target.result;
+                        if (cursor){
+                            results.push(cursor.value);
+                            cursor.continue();
+                        } else {
+                            if(module.debugMode){
+                                console.log('Entries all displayed.');
+                                console.log(results);
+                            }
+                            deferred.resolve(results);
+                        }
+                    };
+                    req.onerror = function(event){
+                        deferred.reject(event);
+                    };
+                }, function(err){
+                    deferred.reject(err);
+                });
+
+                return promises;
+            },
+
+            getByKeyValue : function(storename, indexKey, val){
+                var deferred = $q.defer();
+                // var promises = deferred.promise;
+                var promises = [];
+                var result = [];
+                var mm_length = 0;
+                
+                this.getAll(storename).then(function(data){
+                    var inner_def = $q.defer();
+                    mm_length = data.length;
+                    angular.forEach(data, function(value, key){
+                        if(value[indexKey] == val){
+                            result.push(value);
+                            inner_def.resolve(result);
+                        }
+                        promises.push(inner_def.promise);
+                        $q.all(promises).then(function(data){
+                            if(key == (mm_length-1)){
+                                deferred.resolve(result);
+                            }
+                        });
+                    });
+                },
+                function(err){
+                    console.log(err);
+                    deferred.reject(err);
+                });
+                return deferred.promise;
+            },
+            
+            countRecord : function(storename){
+                var results = [];
+                var deferred = $q.defer();
+                var promises = deferred.promise;
+                var db = module.db; 
+                var objStore = this;
+
+                this._openStore(db, storename, "readonly").then(function(store){
+                    var req = store.count();
+                    req.onsuccess = function(event){
+                        deferred.resolve(event.target.result);
+                    };
+                    req.onerror = function(error){
+                        deferred.reject(error);
+                    };
+                }, function(err){
+                    deferred.reject(err);
+                });
+
+                return promises;
+            },
+
+        };
+
+        var iAccount = function(){
+            module.storeObj = new ObjectStore();
+        }
+
+        iAccount.prototype = {
+            
+            /*
+                predefine MainMenu, SubMenu, SubSubMenu
+                format of mainMenu id is (MM-9)
+            */
+
+            getChildMenuButton : function(menuId){
+                var actual_id = menuId.split("-")[1];
+                console.log(actual_id);
+                var menu_type = menuId.split("-")[0];
+                var db = module.db;
+                var sub_menu = [];
+                var result = [];
+                if(menu_type.indexOf("mm")>=0){
+                    // find all the Sub Menu
+                    module.storeObj.getByKeyValue("subMenu", "id", actual_id).then(function(data){
+                        console.log(data);
+                        sub_menu = data;
+                        
+                        var promises_sub_sub_menu = $q.defer();
+
+                        angular.forEach(sub_menu, function(value, key){
+                            // todo
+                        });
+
+                    }, function(err){
+                        console.log(err);
+                    });
+                    // console.log("Main Menu");
+                }
+                else{
+                    if(menu_type.indexOf("sm")>=0 && menu_type.indexOf("ssm")>=0){
+                        console.log("Sub Sub Menu");
+                    }
+                    else{
+                        console.log("Sub Menu");
+                    }
+                }
+            }
+        };
+
+
+
+
+        
+
+        return {
+
+        	"database" : function(dbName){
+        		return new Database(dbName);
+        	},
+
+        	"objectStore" : function(){
+        		return new ObjectStore();
+        	},
+
+            "iAccount" : function(){
+                return new iAccount();
+            }
+        }
+
+
+    }];
+
+});
