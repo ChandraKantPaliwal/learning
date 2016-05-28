@@ -3,7 +3,7 @@ YOYOOYOYOYOYOYO
 YOOY
 
 YOOYOOYO
-
+//http://panthersoftware.com/2015/09/08/yet-another-angular-es6-webpack-seed/
 
 
 var db_module = angular.module("allcadlib", []);
