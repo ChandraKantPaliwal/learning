@@ -1,0 +1,12 @@
+install mongodb on local machine (mongodump & mongorestore) commands are required.
+command dumping
+
+mongodump -h xxx11.mlab.com:11 -u user -p password --authenticationDatabase release-db -d release-db -o /home/dumps
+Options -h: mlab host:port, -u mlab user, -p mlab userpassword, --authenticationDatabase -d mlab dbname, -o path to store backupfiles
+
+restore command, to restore locally
+
+mongorestore --db dname /home/dumps
+Otherwise to restore in mlab, create a new db and replace the options
+
+mongorestore -h xxx22.mlab.com:22 -u admin -p password --authenticationDatabase release-backup -d release-backup /home/dumps/
